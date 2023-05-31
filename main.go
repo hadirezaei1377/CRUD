@@ -10,31 +10,48 @@ import (
 	"time"
 )
 
-// show data
 type Article struct {
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"time"`
+	CreatedDate time.Time `json:"time"`
 }
+
 type Response struct {
 	Msg string
 }
 
-func main() {
 
-	ShowData() // show existing data from file
+func ShowData() (dataStore []Article) { // display or manipulate data
+	file, err := os.OpenFile("data.json", os.O_CREATE|os.O_RDONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	http.HandleFunc("/records", getRecords)
-	http.HandleFunc("/records/add", addRecord) // additiona posts
+	defer file.Close()
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	bytes, err := io.ReadAll(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = json.Unmarshal(bytes, &dataStore)  // datastore is a slice of articles
+	if err != nil {
+		log.Fatal(err)
+	}
+	return
 }
 
-func getRecords(w http.ResponseWriter, r *http.Request) {
+
+func GetRecords(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ShowData())
 }
 
-func addRecord(w http.ResponseWriter, r *http.Request) {
+
+func AddRecord(w http.ResponseWriter, r *http.Request) {
+
+    var newArticle Article
+    
+
 	// First read request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -42,19 +59,51 @@ func addRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+
+    
+
+    dataStore := ShowData() // retrieve existing data store
+
+    // Add the new article to the end of the slice
+    dataStore = append(dataStore, newArticle)
+
+    // Encode the updated data store as JSON and write it back to the file
+	
 	// Then open the file for next reads and writes
-	file, err := os.OpenFile("data.json", os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
+    file, err := os.OpenFile("data.json", os.O_WRONLY|os.O_TRUNC, 0644)    
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer file.Close()
 
-	// Read previous file content for append
-	file_content, _ := io.ReadAll(file)
+    bytes, err := json.MarshalIndent(dataStore, "", "  ")
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 
-	// Write all file content
-	// TODO: This is wrong because we can't attach two json strings
-	new_content := append(body, file_content...)
+    _, err = file.Write(bytes)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    response := Response{Msg: "Article added successfully"}
+    json.NewEncoder(w).Encode(response)
+}
+
+
+
+
+// for json adding : read file and save it in an array , unmarshal apped new article and then marshal
+
+
+
+ // file_content, _ := io.ReadAll(file)
+
+
+ // new_content := append(body, file_content...)
+
 	// Previous content may exist and duplicate after every new post request
 	_, err = file.Write(new_content)
 
@@ -66,25 +115,17 @@ func addRecord(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("status", "400")
 		w.Write(resp)
 	}
+
+
+
+func main() {
+
+	ShowData()
+
+	http.HandleFunc("/records", GetRecords)
+	http.HandleFunc("/records/add", AddRecord) // additiona posts
+
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// show data
-func ShowData() (dataStore []Article) {
-	file, err := os.OpenFile("data.json", os.O_CREATE|os.O_RDONLY, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	defer file.Close()
-
-	bytes, err := io.ReadAll(file) // store in binary mode
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = json.Unmarshal(bytes, &dataStore)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return
-}
