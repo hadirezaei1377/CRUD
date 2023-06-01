@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"go.uber.org/zap"
 )
 
 type Article struct {
+	ID          int       `json:"id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	CreatedDate time.Time `json:"created_date"`
@@ -32,8 +35,32 @@ func main() {
 
 	http.HandleFunc("/records", GetRecords)
 	http.HandleFunc("/records/add", AddRecord)
+	http.HandleFunc("/records/id", GetRecordByID)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func GetRecordByID(w http.ResponseWriter, r *http.Request) {
+
+	var record Article
+
+	id := r.URL.Query().Get("id")
+	dataStore := ShowData()
+
+	for _, article := range dataStore {
+		if strconv.Itoa(article.ID) == id {
+			record = article
+			break
+		}
+
+	}
+
+	if record.ID == 0 { // Return an error response if the record is not found
+		http.Error(w, "Record not found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(record)
 }
 
 func Migrate() {
@@ -91,6 +118,8 @@ func AddRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	newArticle.CreatedDate = time.Now()
+
+	newArticle.ID = rand.Intn(1000000)
 
 	dataStore := ShowData()
 	// Add the new article to the end of the slice
