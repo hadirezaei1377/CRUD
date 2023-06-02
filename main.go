@@ -33,8 +33,10 @@ func main() {
 
 	Migrate() // data.json is existed or not , if not craete that
 
-	http.HandleFunc("/records", director)
-	http.HandleFunc("/records/:id", GetRecordByID)
+	r := mux.NewRouter()
+	r.HandleFunc("/records", director)
+	r.HandleFunc("/records/{id}", GetRecordByID).Methods("GET")
+	r.HandleFunc("/records/{id}", UpdateRecordByID).Methods("PUT")
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
@@ -49,7 +51,117 @@ func director(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPost:
 		AddRecord(w, r)
+	case http.MethodDelete:
+		DeleteRecordByID(w, r)
+	case http.MethodPut:
+		UpdateRecordByID(w, r)
 	}
+}
+
+func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
+
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	dataStore := ShowData()
+
+	found := false
+	for i, article := range dataStore {
+		if article.ID == id {
+			found = true
+
+			// Read and decode the updated record from the request body
+			var updatedRecord Article
+			err := json.NewDecoder(r.Body).Decode(&updatedRecord)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			defer r.Body.Close()
+
+			// Update the fields of the record with the given ID
+			dataStore[i].Title = updatedRecord.Title
+			dataStore[i].Description = updatedRecord.Description
+
+			break
+		}
+	}
+
+	if !found { // Return an error response if the record is not found
+		http.Error(w, "Record not found", http.StatusNotFound)
+		return
+	}
+
+	jsonData, err := json.Marshal(dataStore)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	file, err := os.OpenFile("data.json", os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	_, err = file.Write(jsonData)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := Response{Msg: "Record updated successfully"}
+	json.NewEncoder(w).Encode(response)
+}
+
+func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
+
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	dataStore := ShowData()
+
+	found := false
+	for i, article := range dataStore {
+		if article.ID == id {
+			found = true
+
+			// Remove the record with the given ID
+			copy(dataStore[i:], dataStore[i+1:])
+			dataStore = dataStore[:len(dataStore)-1]
+
+			break
+		}
+	}
+
+	if !found { // Return an error response if the record is not found
+		http.Error(w, "Record not found", http.StatusNotFound)
+		return
+	}
+
+	jsonData, err := json.Marshal(dataStore)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	file, err := os.OpenFile("data.json", os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	_, err = file.Write(jsonData)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := Response{Msg: "Record deleted successfully"}
+	json.NewEncoder(w).Encode(response)
+
 }
 
 func GetRecordByID(w http.ResponseWriter, r *http.Request) {
