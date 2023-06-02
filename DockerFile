@@ -1,11 +1,21 @@
-FROM golang:1.20.4-alpine3.15 AS builder
+# image from hub, check is it exist in hub and select minimum volume
+FROM golang:1.20.4-alpine3.16 AS builder 
+# in app as a container 
 WORKDIR /app
+# copy this to app
 COPY go.mod go.sum ./
+# proxy for sanction
 ENV GOPROXY=https://goproxy.io,direct
+# download packages in go mod
 RUN go mod download
+#  copy from file to app
 COPY . ./
+#  run this command (main and app) and run
 RUN CGO_ENABLED=0 GOOS=linux go build -a -o main .
-
 FROM alpine:3.15 AS production
 COPY --from=builder /app/main .
 CMD ["./main"]
+
+# we use docker compose instead of all docker commands for creating images
+# we use just docker-compose up
+# to update images to be same as updates source code we use docker-compose up --build

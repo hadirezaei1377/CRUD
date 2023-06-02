@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -33,13 +32,22 @@ func main() {
 
 	Migrate() // data.json is existed or not , if not craete that
 
-	http.HandleFunc("/records", GetRecords)
-	http.HandleFunc("/records/add", AddRecord)
-	http.HandleFunc("/records/id", GetRecordByID)
+	http.HandleFunc("/records", director)
+	http.HandleFunc("/records/:id", GetRecordByID)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+func director(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		GetRecords(w, r)
+	case http.MethodPost:
+		AddRecord(w, r)
+	}
+}
+
+// FIXME: Should get by id when pass it in url
 func GetRecordByID(w http.ResponseWriter, r *http.Request) {
 
 	var record Article
@@ -119,9 +127,9 @@ func AddRecord(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	newArticle.CreatedDate = time.Now()
 
-	newArticle.ID = rand.Intn(1000000)
-
 	dataStore := ShowData()
+	newArticle.ID = len(dataStore) + 1
+
 	// Add the new article to the end of the slice
 	dataStore = append(dataStore, newArticle)
 

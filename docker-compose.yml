@@ -2,38 +2,8 @@ version: "3.8"
 
 services:
   app:
-    container_name: myapp
-    build:
-      context: .
-      dockerfile: Dockerfile
+    container_name: app
+    build: .
     restart: unless-stopped
     ports:
       - "8080:8080"
-    environment:
-      DATABASE_URL: postgres://user:password@postgres:5432/dbname
-    depends_on:
-      - postgres
-    networks:
-      - mynetwork
-
-  postgres:
-    container_name: postgres
-    image: postgres:13-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: dbname
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/
-    networks:
-      - mynetwork
-
-networks:
-  mynetwork:
-    name: mynetwork
-
-volumes:
-  postgres_data:
