@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gorilla/mux"
 	"go.uber.org/zap"
 )
 
@@ -41,26 +42,30 @@ func main() {
 func director(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		GetRecords(w, r)
+		if r.URL.Path == "/records" { // Handle GET request to /records
+			GetRecords(w, r)
+		} else { // Handle GET request to /records/{id}
+			GetRecordByID(w, r)
+		}
 	case http.MethodPost:
 		AddRecord(w, r)
 	}
 }
 
-// FIXME: Should get by id when pass it in url
 func GetRecordByID(w http.ResponseWriter, r *http.Request) {
 
 	var record Article
 
-	id := r.URL.Query().Get("id")
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
 	dataStore := ShowData()
 
 	for _, article := range dataStore {
-		if strconv.Itoa(article.ID) == id {
+		if article.ID == id {
 			record = article
 			break
 		}
-
 	}
 
 	if record.ID == 0 { // Return an error response if the record is not found
