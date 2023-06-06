@@ -2,10 +2,9 @@ package main
 
 import (
 	"CRUD/logger"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -35,11 +34,13 @@ func main() {
 
 	Migrate() // data.json is existed or not , if not craete that
 
+	articles = ShowData()
+
 	r := mux.NewRouter()
 	r.HandleFunc("/records", director)
-	r.Methods("GET").HandleFunc("/records/{id}", GetRecordByID)
-	r.Methods(http.MethodPut).HandleFunc("/records/{id}", UpdateRecordByID)
-	r.Methods(http.MethodDelete).HandleFunc("/records/{id}", DeleteRecordByID)
+	r.HandleFunc("/records/{id}", GetRecordByID)
+	r.HandleFunc("/records/{id}", UpdateRecordByID)
+	r.HandleFunc("/records/{id}", DeleteRecordByID)
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
@@ -87,6 +88,23 @@ func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+var articles []Article
+
+func UpdateRecord(id int, article *Article) error {
+	// find the article with the given id in the slice
+	for i, a := range articles {
+		if a.ID == id {
+			// update the fields of the article with the new values
+			articles[i].Title = article.Title
+			articles[i].Description = article.Description
+			return nil
+		}
+	}
+
+	// if no article was found with the given id, return an error
+	return fmt.Errorf("Article with ID %d not found", id)
+}
+
 func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
 	// extract id from the URL params
 	vars := mux.Vars(r)
@@ -96,8 +114,7 @@ func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = DeleteRecord(id)
-	if err != nil {
+	if err := DeleteRecord(id); err != nil {
 		// handle error
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -106,6 +123,41 @@ func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func DeleteRecord(id int) error {
+	// Get all records from data store
+	dataStore := ShowData()
+
+	// Find the index of the record with the given ID
+	index := -1
+	for i, article := range dataStore {
+		if article.ID == id {
+			index = i
+			break
+		}
+	}
+
+	// Return an error if the record is not found
+	if index == -1 {
+		return fmt.Errorf("Record not found")
+	}
+
+	// Remove the record from the data store
+	dataStore = append(dataStore[:index], dataStore[index+1:]...)
+
+	// Save the updated data back to the data store file
+	file, err := os.OpenFile("data.json", os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	err = json.NewEncoder(file).Encode(dataStore)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 func GetRecordByID(w http.ResponseWriter, r *http.Request) { // todo : db and line by line
 
 	var record Article
@@ -150,23 +202,27 @@ func Migrate() {
 
 }
 
-func ShowData() (dataStore []Article) { // display or manipulate data    // todo : line by line
-	file, err := os.OpenFile("data.json", os.O_CREATE|os.O_RDONLY, 0644)
+func ShowData() (dataStore []Article) {
+	// Open data store file
+	file, err := os.OpenFile("data.json", os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
-		globalLogger.Error(err.Error())
-
+		log.Fatal(err)
 	}
 	defer file.Close()
 
-	bytes, err := io.ReadAll(file)
+	// Read JSON data from file
+	bytes, err := ioutil.ReadAll(file)
 	if err != nil {
-		globalLogger.Error(err.Error())
+		log.Fatal(err)
 	}
 
-	err = json.Unmarshal(bytes, &dataStore) // datastore is a slice of articles
+	// Unmarshal JSON data into dataStore variable
+	err = json.Unmarshal(bytes, &dataStore)
 	if err != nil {
-		globalLogger.Error(err.Error())
+		log.Fatal(err)
 	}
+
+	return dataStore
 }
 
 func GetRecords(w http.ResponseWriter, r *http.Request) {
@@ -185,53 +241,8 @@ func AddRecord(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	newArticle.CreatedDate = time.Now()
 
-	// DB
-
-	db, err := ConnectToDB()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer db.Close()
-
-	// Insert the new record into the articles table
-	query := `INSERT INTO articles (title, description, created_date) VALUES ($1, $2, $3)`
-	_, err = db.Exec(query, newArticle.Title, newArticle.Description, newArticle.CreatedDate)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	response := Response{Msg: "Article added successfully"}
+
 	json.NewEncoder(w).Encode(response)
 
-}
-
-// connecting to postgressql    // todo : line by line
-func ConnectToDB() (*sql.DB, error) {
-
-	dbHost := "localhost"
-	dbPort := "5432"
-	dbUser := "username"
-	dbPassword := "password"
-	dbName := "dbname"
-
-	connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword, dbName)
-
-	db, err := sql.Open("postgres", connectionString)
-	if err != nil {
-		log.Fatal(err)
-		return nil, err
-	}
-
-	err = db.Ping()
-	if err != nil {
-		log.Fatal(err)
-		return nil, err
-	}
-
-	fmt.Println("you are connected to database successfully")
-
-	return db, nil
 }
