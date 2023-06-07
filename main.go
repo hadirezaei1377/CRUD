@@ -23,15 +23,16 @@ type Article struct {
 }
 
 type Response struct {
-	Msg string
+	Msg string `json:"msg"`
 }
 
 var globalLogger *zap.Logger
+var articles []Article
 
 func main() {
 	globalLogger = logger.InitializeLogger()
 
-	Migrate() // data.json is existed or not , if not craete that
+	Migrate()
 
 	articles = ShowData()
 
@@ -58,15 +59,13 @@ func main() {
 func director(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		// Handle GET request to /records
 		GetRecords(w, r)
-
 	case http.MethodPost:
 		AddRecord(w, r)
-
+	case http.MethodPut:
+		UpdateRecordByID(w, r)
 	case http.MethodDelete:
 		DeleteRecordByID(w, r)
-
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -74,7 +73,6 @@ func director(w http.ResponseWriter, r *http.Request) {
 }
 
 func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
-	// extract id from the URL params
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
@@ -82,7 +80,6 @@ func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// decode request body into an Article struct
 	var article Article
 	err = json.NewDecoder(r.Body).Decode(&article)
 	if err != nil {
@@ -90,10 +87,8 @@ func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// update the record with the given id
 	err = UpdateRecord(id, &article)
 	if err != nil {
-		// handle error
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -101,17 +96,13 @@ func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-var articles []Article
-
 func UpdateRecord(id int, article *Article) error {
-	// find the article with the given id in the slice
 	for i := range articles {
 		if articles[i].ID == id {
-			// update the fields of the article with the new values
+
 			articles[i].Title = article.Title
 			articles[i].Description = article.Description
 
-			// save the updated data back to the data store file
 			err := SaveData(articles)
 			if err != nil {
 				return fmt.Errorf("failed to save data: %v", err)
@@ -121,7 +112,6 @@ func UpdateRecord(id int, article *Article) error {
 		}
 	}
 
-	// if no article was found with the given id, return an error
 	return fmt.Errorf("Article with ID %d not found", id)
 }
 
@@ -141,7 +131,7 @@ func SaveData(dataStore []Article) error {
 }
 
 func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
-	// extract id from the URL params
+
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
@@ -149,10 +139,7 @@ func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println("Deleting record with ID:", id)
-
 	if err := DeleteRecord(id); err != nil {
-		// handle error
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -161,10 +148,9 @@ func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func DeleteRecord(id int) error {
-	// read existing data from data store file
+
 	dataStore := ShowData()
 
-	// find index of record with given ID
 	index := -1
 	for i, article := range dataStore {
 		if article.ID == id {
@@ -173,15 +159,12 @@ func DeleteRecord(id int) error {
 		}
 	}
 
-	// if no record was found with the given ID, return an error
 	if index == -1 {
 		return fmt.Errorf("Record not found")
 	}
 
-	// remove record from data store
 	dataStore = append(dataStore[:index], dataStore[index+1:]...)
 
-	// save updated data back to data store file
 	err := SaveData(dataStore)
 	if err != nil {
 		return fmt.Errorf("Failed to save data: %v", err)
@@ -190,7 +173,7 @@ func DeleteRecord(id int) error {
 	return nil
 }
 
-func GetRecordByID(w http.ResponseWriter, r *http.Request) { // todo : db and line by line
+func GetRecordByID(w http.ResponseWriter, r *http.Request) {
 
 	var record Article
 
@@ -206,7 +189,7 @@ func GetRecordByID(w http.ResponseWriter, r *http.Request) { // todo : db and li
 		}
 	}
 
-	if record.ID == 0 { // Return an error response if the record is not found
+	if record.ID == 0 {
 		http.Error(w, "Record not found", http.StatusNotFound)
 		return
 	}
@@ -235,20 +218,18 @@ func Migrate() {
 }
 
 func ShowData() (dataStore []Article) {
-	// Open data store file
+
 	file, err := os.OpenFile("data.json", os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	// Read JSON data from file
 	bytes, err := ioutil.ReadAll(file)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Unmarshal JSON data into dataStore variable
 	err = json.Unmarshal(bytes, &dataStore)
 	if err != nil {
 		log.Fatal(err)
@@ -264,34 +245,27 @@ func GetRecords(w http.ResponseWriter, r *http.Request) {
 func AddRecord(w http.ResponseWriter, r *http.Request) {
 	var newArticle Article
 
-	// decode request body into an Article struct
 	err := json.NewDecoder(r.Body).Decode(&newArticle)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// set the ID of the new article
 	newArticle.ID = len(articles) + 1
 
-	// set the created date of the new article
 	newArticle.CreatedDate = time.Now()
 
-	// add the new article to the data store
 	articles = append(articles, newArticle)
 
-	// save the updated data back to the data store file
 	err = SaveData(articles)
 	if err != nil {
-		// handle error
+
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// create response message
 	response := Response{Msg: "Article added successfully"}
 
-	// send response back to client
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
