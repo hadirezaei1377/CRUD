@@ -38,9 +38,9 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/records", director)
-	r.HandleFunc("/records/{id}", GetRecordByID)
-	r.HandleFunc("/records/{id}", UpdateRecordByID)
-	r.HandleFunc("/records/{id}", DeleteRecordByID)
+	r.HandleFunc("/records/{id}", GetRecordByID).Methods("GET")
+	r.HandleFunc("/records/{id}", UpdateRecordByID).Methods("PUT")
+	r.HandleFunc("/records/{id}", DeleteRecordByID).Methods("DELETE")
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
@@ -92,17 +92,39 @@ var articles []Article
 
 func UpdateRecord(id int, article *Article) error {
 	// find the article with the given id in the slice
-	for i, a := range articles {
-		if a.ID == id {
+	for i := range articles {
+		if articles[i].ID == id {
 			// update the fields of the article with the new values
 			articles[i].Title = article.Title
 			articles[i].Description = article.Description
+
+			// save the updated data back to the data store file
+			err := SaveData(articles)
+			if err != nil {
+				return fmt.Errorf("failed to save data: %v", err)
+			}
+
 			return nil
 		}
 	}
 
 	// if no article was found with the given id, return an error
 	return fmt.Errorf("Article with ID %d not found", id)
+}
+
+func SaveData(dataStore []Article) error {
+	file, err := os.OpenFile("data.json", os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	err = json.NewEncoder(file).Encode(dataStore)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +163,7 @@ func DeleteRecord(id int) error {
 		return fmt.Errorf("Record not found")
 	}
 
+	articles = dataStore
 	// Remove the record from the data store
 	dataStore = append(dataStore[:index], dataStore[index+1:]...)
 
@@ -230,19 +253,29 @@ func GetRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func AddRecord(w http.ResponseWriter, r *http.Request) {
-
 	var newArticle Article
 
+	// decode request body into an Article struct
 	err := json.NewDecoder(r.Body).Decode(&newArticle)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+
+	// set the ID of the new article
+	newArticle.ID = len(articles) + 1
+
+	// set the created date of the new article
 	newArticle.CreatedDate = time.Now()
 
+	// add the new article to the data store
+	articles = append(articles, newArticle)
+
+	// create response message
 	response := Response{Msg: "Article added successfully"}
 
+	// send response back to client
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
-
 }
