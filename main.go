@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -52,9 +51,10 @@ func main() {
 
 	switch dbType {
 	case "postgres":
-		db, err = postgres.Connect()
+		connStr := "host=your_host port=your_port user=your_user password=your_password dbname=your_dbname sslmode=require"
+		db, err = sql.Open("postgres", connStr)
 	case "sqlite":
-		db, err = sqlite.Connect()
+		db, err = sql.Open("sqlite3", "./foo.db")
 	default:
 		log.Fatalf("Unknown database type: %s", dbType)
 	}
@@ -81,29 +81,38 @@ func main() {
 	}
 
 	for _, route := range routes {
-		r.HandleFunc(route.Path, director).Methods(route.Method)
+		r.HandleFunc(route.Path, director(db)).Methods(route.Method)
 	}
+	r.HandleFunc("/records", func(w http.ResponseWriter, r *http.Request) {
+		GetRecords(w, r, db)
+	}).Methods(http.MethodGet)
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
-func director(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		GetRecords(w, r)
-	case http.MethodPost:
-		AddRecord(w, r)
-	case http.MethodPut:
-		UpdateRecordByID(w, r)
-	case http.MethodDelete:
-		DeleteRecordByID(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+func director(db *sql.DB) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			GetRecords(w, r, db)
+		case http.MethodPost:
+			AddRecord(w, r, db)
+		case http.MethodPut:
+			UpdateRecordByID(w, r, db)
+		case http.MethodDelete:
+			DeleteRecordByID(w, r, db)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 	}
 }
 
-func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
+func DeleteRecordByID(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	panic("unimplemented")
+}
+
+func UpdateRecordByID(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
@@ -117,26 +126,6 @@ func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-
-	dbType := "postgres"
-
-	var db *sql.DB
-	switch dbType {
-	case "postgres":
-		db, err = postgres.Connect()
-	case "sqlite":
-		db, err = sqlite.Connect()
-	default:
-		http.Error(w, "Unknown database type", http.StatusInternalServerError)
-		return
-	}
-
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to database: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	defer db.Close()
 
 	err = UpdateRecord(id, &article, db)
 	if err != nil {
@@ -183,137 +172,81 @@ func SaveData(dataStore []Article) error {
 	return nil
 }
 
-func DeleteRecordByID(w http.ResponseWriter, r *http.Request) {
-
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
-		return
-	}
-
-	if err := DeleteRecord(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func DeleteRecord(id int) error {
-
-	dataStore := ShowData()
-
-	index := -1
-	for i, article := range dataStore {
-		if article.ID == id {
-			index = i
-			break
-		}
-	}
-
-	if index == -1 {
-		return fmt.Errorf("Record not found")
-	}
-
-	dataStore = append(dataStore[:index], dataStore[index+1:]...)
-
-	err := SaveData(dataStore)
-	if err != nil {
-		return fmt.Errorf("Failed to save data: %v", err)
-	}
-
-	return nil
-}
-
-func GetRecordByID(w http.ResponseWriter, r *http.Request) {
-
-	var record Article
-
+func GetRecordByID(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
-	dataStore := ShowData()
+	var record Article
+	err := db.QueryRow("SELECT id, title, description, created_date FROM articles WHERE id=$1", id).Scan(&record.ID, &record.Title, &record.Description, &record.CreatedDate)
 
-	for _, article := range dataStore {
-		if article.ID == id {
-			record = article
-			break
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Record not found", http.StatusNotFound)
+			return
 		}
-	}
-
-	if record.ID == 0 {
-		http.Error(w, "Record not found", http.StatusNotFound)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	json.NewEncoder(w).Encode(record)
 }
 
-func Migrate() {
-	file, err := os.OpenFile("data.json", os.O_CREATE, 0644)
+func Migrate(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS articles (
+			id SERIAL PRIMARY KEY,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL,
+			created_date TIMESTAMP NOT NULL DEFAULT NOW()
+		);
+	`)
+
 	if err != nil {
-		globalLogger.Error(err.Error())
+		return fmt.Errorf("Failed to migrate database: %v", err)
+	}
+
+	return nil
+}
+
+func ShowData(db *sql.DB) (dataStore []Article, err error) {
+	rows, err := db.Query("SELECT id, title, description, created_date FROM articles")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var article Article
+		err := rows.Scan(&article.ID, &article.Title, &article.Description, &article.CreatedDate)
+		if err != nil {
+			return nil, err
+		}
+		dataStore = append(dataStore, article)
+	}
+
+	return dataStore, nil
+}
+
+func GetRecords(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	dataStore, err := ShowData(db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer file.Close()
-
-	stat, err := file.Stat()
-	if err != nil {
-		globalLogger.Error(err.Error())
-		return
-	}
-
-	if stat.Size() == 0 {
-		file.Write([]byte("[]"))
-	}
-
+	json.NewEncoder(w).Encode(dataStore)
 }
 
-func ShowData() (dataStore []Article) {
-
-	file, err := os.OpenFile("data.json", os.O_RDONLY|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	bytes, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = json.Unmarshal(bytes, &dataStore)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return dataStore
-}
-
-func GetRecords(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(ShowData())
-}
-
-func AddRecord(w http.ResponseWriter, r *http.Request) {
+func AddRecord(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	var newArticle Article
-
 	err := json.NewDecoder(r.Body).Decode(&newArticle)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	newArticle.ID = len(articles) + 1
-
-	newArticle.CreatedDate = time.Now()
-
-	articles = append(articles, newArticle)
-
-	err = SaveData(articles)
+	err = db.QueryRow("INSERT INTO articles (title, description, created_date) VALUES ($1, $2, NOW()) RETURNING id", newArticle.Title, newArticle.Description).Scan(&newArticle.ID)
 	if err != nil {
-
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to add record: %v", err), http.StatusInternalServerError)
 		return
 	}
 
