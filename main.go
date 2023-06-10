@@ -2,6 +2,7 @@ package main
 
 import (
 	"CRUD/logger"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -19,6 +20,7 @@ import (
 // use DB , instead save to file use some functions for connicting to database(sqlite), dont use gorm,
 // sqlite in a package and postgress in another package
 // second functions like DeleteRecord be in a interface
+// handlers in a seperated file
 
 // how can I improve that ?
 // 1- Add input validation
@@ -43,9 +45,27 @@ var articles []Article
 func main() {
 	globalLogger = logger.InitializeLogger()
 
-	Migrate()
+	dbType := "postgres"
 
-	articles = ShowData()
+	var db *sql.DB
+	var err error
+
+	switch dbType {
+	case "postgres":
+		db, err = postgres.Connect()
+	case "sqlite":
+		db, err = sqlite.Connect()
+	default:
+		log.Fatalf("Unknown database type: %s", dbType)
+	}
+
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	defer db.Close()
+
+	Migrate(db)
 
 	r := mux.NewRouter()
 
@@ -98,7 +118,27 @@ func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = UpdateRecord(id, &article)
+	dbType := "postgres"
+
+	var db *sql.DB
+	switch dbType {
+	case "postgres":
+		db, err = postgres.Connect()
+	case "sqlite":
+		db, err = sqlite.Connect()
+	default:
+		http.Error(w, "Unknown database type", http.StatusInternalServerError)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to database: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	defer db.Close()
+
+	err = UpdateRecord(id, &article, db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -107,23 +147,25 @@ func UpdateRecordByID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func UpdateRecord(id int, article *Article) error {
-	for i := range articles {
-		if articles[i].ID == id {
-
-			articles[i].Title = article.Title
-			articles[i].Description = article.Description
-
-			err := SaveData(articles)
-			if err != nil {
-				return fmt.Errorf("failed to save data: %v", err)
-			}
-
-			return nil
+func UpdateRecord(id int, article *Article, db *sql.DB) error {
+	var existingArticle Article
+	err := db.QueryRow("SELECT id, title, description, created_date FROM articles WHERE id=$1", id).Scan(&existingArticle.ID, &existingArticle.Title, &existingArticle.Description, &existingArticle.CreatedDate)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("Article with ID %d not found", id)
 		}
+		return err
 	}
 
-	return fmt.Errorf("Article with ID %d not found", id)
+	existingArticle.Title = article.Title
+	existingArticle.Description = article.Description
+
+	_, err = db.Exec("UPDATE articles SET title=$1, description=$2 WHERE id=$3", existingArticle.Title, existingArticle.Description, id)
+	if err != nil {
+		return fmt.Errorf("Failed to update article: %v", err)
+	}
+
+	return nil
 }
 
 func SaveData(dataStore []Article) error {

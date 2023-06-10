@@ -1,9 +1,11 @@
-package sqlite
+package databases
 
 import (
 	"database/sql"
 	"encoding/json"
+	"CRUD/Article"
 )
+
 
 // initialize the SQLite database connection
 func Connect() (*sql.DB, error) {
@@ -49,6 +51,7 @@ func ShowData(db *sql.DB) ([]Article, error) {
 			return nil, err
 		}
 
+		Article := 
 		var article Article
 		err = json.Unmarshal(data, &article)
 		if err != nil {
