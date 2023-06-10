@@ -15,6 +15,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// task :
+// use DB , instead save to file use some functions for connicting to database(sqlite), dont use gorm,
+// sqlite in a package and postgress in another package
+// second functions like DeleteRecord be in a interface
+
+// how can I improve that ?
+// 1- Add input validation
+// 2- Use a database
+// 3- Logging
+// 4- Authentication and authorization
+
 type Article struct {
 	ID          int       `json:"id"`
 	Title       string    `json:"title"`
