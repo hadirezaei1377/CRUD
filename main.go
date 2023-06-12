@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -27,8 +26,6 @@ type Database struct {
 type Response struct {
 	Msg string `json:"msg"`
 }
-
-var articles []Article
 
 func main() {
 
@@ -53,7 +50,10 @@ func main() {
 
 	defer db.Close()
 
-	Migrate(db)
+	err = Migrate(db)
+	if err != nil {
+		log.Fatalf("Failed to migrate database: %v", err)
+	}
 
 	dataStore := &Database{db: db}
 
@@ -70,18 +70,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
-func GetArticles(ds dataStore) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		articles, err := ds.GetRecords()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(articles)
-	}
-}
-
-func AddArticle(ds dataStore) func(http.ResponseWriter, *http.Request) {
+func AddArticle(ds *Database) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var newArticle Article
 		err := json.NewDecoder(r.Body).Decode(&newArticle)
@@ -104,7 +93,7 @@ func AddArticle(ds dataStore) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func GetArticleByID(ds dataStore) func(http.ResponseWriter, *http.Request) {
+func GetArticleByID(ds *Database) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		id, _ := strconv.Atoi(vars["id"])
@@ -124,7 +113,7 @@ func GetArticleByID(ds dataStore) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func UpdateArticleByID(ds dataStore) func(http.ResponseWriter, *http.Request) {
+func UpdateArticleByID(ds *Database) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		id, err := strconv.Atoi(vars["id"])
@@ -142,30 +131,11 @@ func UpdateArticleByID(ds dataStore) func(http.ResponseWriter, *http.Request) {
 
 		err = ds.UpdateRecord(id, &article)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to update record: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
-	}
-}
-
-func DeleteArticleByID(ds dataStore) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		id, err := strconv.Atoi(vars["id"])
-		if err != nil {
-			http.Error(w, "Invalid ID", http.StatusBadRequest)
-			return
-		}
-
-		err = ds.DeleteArticle(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		response := Response{Msg: "Article deleted successfully"}
+		response := Response{Msg: "Article updated successfully"}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -173,130 +143,66 @@ func DeleteArticleByID(ds dataStore) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func (d *Database) DeleteArticle(id int) error {
-	result, err := d.db.Exec("DELETE FROM articles WHERE id=$1", id)
-	if err != nil {
-		return fmt.Errorf("Failed to delete article: %v", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("Failed to get rows affected: %v", err)
-	}
-
-	if rowsAffected == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
-}
-
-func UpdateRecordByID(ds dataStore) func(http.ResponseWriter, *http.Request) {
+func DeleteArticleByID(ds *Database) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		id, err := strconv.Atoi(vars["id"])
+		id, _ := strconv.Atoi(vars["id"])
+
+		err := ds.DeleteRecord(id)
 		if err != nil {
-			http.Error(w, "Invalid ID", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Failed to delete record: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		var article Article
-		err = json.NewDecoder(r.Body).Decode(&article)
-		if err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		err = ds.UpdateRecord(id, &article)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
+		response := Response{Msg: "Article deleted successfully"}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
 	}
+
 }
 
-func (d *Database) UpdateRecord(id int, article *Article) error {
-	var existingArticle Article
-	err := d.db.QueryRow("SELECT id, title, description, created_date FROM articles WHERE id=$1", id).Scan(&existingArticle.ID, &existingArticle.Title, &existingArticle.Description, &existingArticle.CreatedDate)
+func SaveData(ds *Database) error {
+	articles, err := ds.ShowData()
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("Article with ID %d not found", id)
-		}
 		return err
 	}
 
-	existingArticle.Title = article.Title
-	existingArticle.Description = article.Description
-
-	_, err = d.db.Exec("UPDATE articles SET title=$1, description=$2 WHERE id=$3", existingArticle.Title, existingArticle.Description, id)
-	if err != nil {
-		return fmt.Errorf("Failed to update article: %v", err)
+	for _, article := range articles {
+		err = ds.AddRecord(&article)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
-}
-
-func SaveData(dataStore []Article) error {
-	file, err := os.OpenFile("data.json", os.O_TRUNC|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	err = json.NewEncoder(file).Encode(dataStore)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func GetRecordByID(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id, _ := strconv.Atoi(vars["id"])
-
-	var record Article
-	err := db.QueryRow("SELECT id, title, description, created_date FROM articles WHERE id=$1", id).Scan(&record.ID, &record.Title, &record.Description, &record.CreatedDate)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			http.Error(w, "Record not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(record)
 }
 
 func Migrate(db *sql.DB) error {
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS articles (id SERIAL PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, created_date TIMESTAMP NOT NULL DEFAULT NOW());")
-
+	query := "CREATE TABLE IF NOT EXISTS articles (id SERIAL PRIMARY KEY, title TEXT, description TEXT, created_date TIMESTAMP);"
+	_, err := db.Exec(query)
 	if err != nil {
-		return fmt.Errorf("Failed to migrate database: %v", err)
+		return err
 	}
 
 	return nil
 }
 
-func (d *Database) ShowData() ([]Article, error) {
-	rows, err := d.db.Query("SELECT id, title, description, created_date FROM articles")
+func (ds *Database) ShowData() ([]Article, error) {
+	articles := []Article{}
+	rows, err := ds.db.Query("SELECT id, title, description, created_date FROM articles ORDER BY created_date DESC")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	articles := make([]Article, 0)
 	for rows.Next() {
-		var article Article
-		err := rows.Scan(&article.ID, &article.Title, &article.Description, &article.CreatedDate)
+		var a Article
+		err = rows.Scan(&a.ID, &a.Title, &a.Description, &a.CreatedDate)
 		if err != nil {
 			return nil, err
 		}
-		articles = append(articles, article)
+		articles = append(articles, a)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -306,36 +212,57 @@ func (d *Database) ShowData() ([]Article, error) {
 	return articles, nil
 }
 
-func GetRecords(ds dataStore) func(http.ResponseWriter, *http.Request) {
+func (ds *Database) AddRecord(a *Article) error {
+	query := "INSERT INTO articles (title, description, created_date) VALUES ($1, $2, $3) RETURNING id"
+	err := ds.db.QueryRow(query, a.Title, a.Description, time.Now()).Scan(&a.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (ds *Database) GetRecord(id int, a *Article) error {
+	query := "SELECT id, title, description, created_date FROM articles WHERE id = $1"
+	err := ds.db.QueryRow(query, id).Scan(&a.ID, &a.Title, &a.Description, &a.CreatedDate)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (ds *Database) UpdateRecord(id int, a *Article) error {
+	query := "UPDATE articles SET title=$2, description=$3 WHERE id=$1"
+
+	_, err := ds.db.Exec(query, id, a.Title, a.Description)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (ds *Database) DeleteRecord(id int) error {
+	query := "DELETE FROM articles WHERE id=$1"
+
+	_, err := ds.db.Exec(query, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func GetArticles(ds *Database) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		articles, err := ds.ShowData()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to retrieve records: %v", err), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(dataStore)
-	}
-}
-
-func AddRecord(ds dataStore) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var newArticle Article
-		err := json.NewDecoder(r.Body).Decode(&newArticle)
-		if err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		err = ds.AddRecord(&newArticle)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to add record: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		response := Response{Msg: "Article added successfully"}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(articles)
 	}
 }
